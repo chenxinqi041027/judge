@@ -11,7 +11,6 @@ from typing import Any, Dict, List
 from pathlib import Path
 
 import torch
-from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 
 
 class CometClient:
@@ -24,8 +23,14 @@ class CometClient:
         if model_path:
             p = Path(model_path)
             if p.exists():
-                self.tokenizer = AutoTokenizer.from_pretrained(model_path)
-                self.model = AutoModelForSeq2SeqLM.from_pretrained(model_path).to(device)
+                try:
+                    from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
+                    self.tokenizer = AutoTokenizer.from_pretrained(model_path)
+                    self.model = AutoModelForSeq2SeqLM.from_pretrained(model_path).to(device)
+                except Exception:
+                    # Any dependency/import issue should gracefully disable COMET
+                    self.tokenizer = None
+                    self.model = None
             else:
                 # model path not found; stay inactive
                 self.model = None

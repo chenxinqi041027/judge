@@ -23,6 +23,24 @@ python -m src.nokb_framework.pipeline \
 ```
 CPU 运行可将 `--device cpu`。
 
+## 训练（demo）
+使用 `demo.json` 训练两个轻量模型：
+- `StrategyRanker`：对 `(context/features, strategy description)` 做二分类打分
+- `ResponseStrategyMapper`：把 HEAL 检索到的 response 文本映射到策略类别
+
+```bash
+cd /data2/xqchen/Judge
+python -m src.nokb_framework.train_demo \
+  --input /data2/xqchen/Judge/data/demo.json \
+  --heal_dir /data2/xqchen/Judge/model/HEAL
+```
+
+训练后模型默认保存在：
+- `/data2/xqchen/Judge/model/nokb_framework/strategy_ranker.pkl`
+- `/data2/xqchen/Judge/model/nokb_framework/response_strategy_mapper.pkl`
+
+之后 `pipeline.py` 会自动加载这两个模型进行推理。
+
 ## 输入格式
 - JSONL，每行包含至少一个 `utterance`/`text`/`reason`，可选 `dialog`（列表，每项含 `speaker` 与 `text`）。
 

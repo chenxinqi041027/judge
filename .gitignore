@@ -1,4 +1,7 @@
 model/
+output/
+data/
+log/
 *.bin
 *.pt
 *.ckpt
