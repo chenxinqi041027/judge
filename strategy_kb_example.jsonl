@@ -1,0 +1,3 @@
+{"emotion": "afraid", "triggers": ["fear", "scared", "danger", "accident", "panic"], "strategies": ["先确认对方安全并表达关心", "鼓励其寻求必要的帮助（医疗/亲友/保险）", "帮助其规划后续步骤以降低不确定感"], "cautions": ["避免轻描淡写或指责", "先共情再给建议"], "source": "example"}
+{"emotion": "sad", "triggers": ["loss", "disappointed", "lonely", "unhappy"], "strategies": ["认可并允许表达悲伤，保持陪伴", "询问具体可提供的支持或陪伴方式", "帮助其看到可控的小行动，避免空洞鼓励"], "cautions": ["不要比较他人经历", "避免过早说教"], "source": "example"}
+{"emotion": "angry", "triggers": ["angry", "furious", "mad", "frustrated"], "strategies": ["先倾听并确认感受，避免对抗", "拆解触发点，协助聚焦可控事项", "必要时建议短暂冷静再讨论解决方案"], "cautions": ["避免反驳或否定情绪", "不要火上浇油"], "source": "example"}
