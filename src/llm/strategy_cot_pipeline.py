@@ -41,7 +41,7 @@ except Exception:
 
 DEFAULT_OUTPUT_DIR = Path("/data2/xqchen/Judge/output/llm")
 DEFAULT_LOG_DIR = Path("/data2/xqchen/Judge/log/llm")
-DEFAULT_QWEN_PATH = Path("/data2/xqchen/models/Qwen3-1.7B")
+DEFAULT_QWEN_PATH = Path("/data2/xqchen/models/Qwen3-8B")
 
 
 def build_logger(logpath: Path) -> logging.Logger:
@@ -221,82 +221,66 @@ def build_prompt(
     response_priors: Dict[str, float],
     candidates: List[Dict[str, str]],
 ) -> str:
-    heal_responses = [
-        {
-            "text": item.get("text", ""),
-            "strategy": item.get("strategy", "other"),
-            "score": item.get("score", 0.0),
-        }
+    stressor_lines = [
+        f"- {item.get('label', '')} (score={item.get('score', 0.0)})"
+        for item in heal_result.get("top_stressors", [])[:3]
+    ]
+    expectation_lines = [
+        f"- {item.get('label', '')} (score={item.get('score', 0.0)})"
+        for item in heal_result.get("top_expectations", [])[:3]
+    ]
+    response_lines = [
+        f"- [{item.get('strategy', 'other')}] {item.get('text', '')} (score={item.get('score', 0.0)})"
         for item in heal_result.get("top_responses", [])[:5]
     ]
-    compact_candidates = [
-        {
-            "category": item["category"],
-            "description": item["description"],
-            "heal_prior": float(heal_result.get("strategy_priors", {}).get(item["category"], 0.0)),
-            "comet_prior": float(comet_priors.get(item["category"], 0.0)),
-            "response_style_prior": float(response_priors.get(item["category"], 0.0)),
-        }
+    candidate_lines = [
+        "- {category}: {description} | heal_prior={heal:.3f} | comet_prior={comet:.3f} | response_style_prior={style:.3f}".format(
+            category=item["category"],
+            description=item["description"],
+            heal=float(heal_result.get("strategy_priors", {}).get(item["category"], 0.0)),
+            comet=float(comet_priors.get(item["category"], 0.0)),
+            style=float(response_priors.get(item["category"], 0.0)),
+        )
         for item in candidates
+    ]
+    comet_lines = [
+        f"- {fact.get('relation', '')}: {fact.get('tail', '')}"
+        for fact in commonsense_facts[:8]
+        if fact.get("tail")
     ]
 
     if mode == "classify":
         task_instruction = (
             "Task: identify which single emotional support strategy best matches the supporter response.\n\n"
-            "Use the dialogue context, the supporter response, emotion, reason, COMET cues, and HEAL evidence.\n"
-            "Evaluate every candidate on five dimensions from 0 to 5: response_style_match, empathy_fit, actionability, evidence_support, safety.\n"
-            "The final_score should focus most on response_style_match and empathy_fit.\n"
+            "Think step by step before deciding. The actual wording of the supporter response matters most.\n"
+            "Use dialogue context, emotion, reason, COMET cues, and HEAL evidence only as auxiliary evidence.\n"
+            "Compare all candidate strategies one by one, and explain why the final one is best and why close alternatives lose.\n"
         )
         target_block = f"Supporter response to classify:\n{supporter_response or 'N/A'}\n\n"
         schema = (
-            "Return valid JSON only, wrapped between <json> and </json>, in the following schema:\n"
-            "{\n"
-            '  "selected_strategy": "one candidate category",\n'
-            '  "brief_rationale": "short explanation",\n'
-            '  "candidate_scores": [\n'
-            "    {\n"
-            '      "category": "candidate",\n'
-            '      "response_style_match": 0,\n'
-            '      "empathy_fit": 0,\n'
-            '      "actionability": 0,\n'
-            '      "evidence_support": 0,\n'
-            '      "safety": 0,\n'
-            '      "final_score": 0.0,\n'
-            '      "reason": "one sentence"\n'
-            "    }\n"
-            "  ]\n"
-            "}\n\n"
+            "Output naturally. You do not need to follow JSON.\n"
+            "But your last line must be exactly in this form:\n"
+            "Final strategy: <one candidate category>\n"
+            "If possible, include short score lines such as '<candidate>: 4.5/5 - reason'.\n\n"
         )
     else:
         task_instruction = (
             "Task: choose the single best emotional support strategy for the seeker.\n\n"
-            "Use the dialogue, emotion, reason, COMET commonsense cues, and HEAL retrieval evidence.\n"
-            "Evaluate every candidate on four dimensions from 0 to 5: empathy_fit, actionability, evidence_support, safety.\n"
-            "The final_score should focus most on empathy_fit and evidence_support.\n"
+            "Think step by step before deciding.\n"
+            "Use dialogue, emotion, reason, COMET commonsense cues, and HEAL retrieval evidence to compare all candidate strategies.\n"
+            "Explain the strengths and weaknesses of the main candidates, then choose one final strategy.\n"
         )
         target_block = ""
         schema = (
-            "Return valid JSON only, wrapped between <json> and </json>, in the following schema:\n"
-            "{\n"
-            '  "selected_strategy": "one candidate category",\n'
-            '  "brief_rationale": "short explanation",\n'
-            '  "candidate_scores": [\n'
-            "    {\n"
-            '      "category": "candidate",\n'
-            '      "empathy_fit": 0,\n'
-            '      "actionability": 0,\n'
-            '      "evidence_support": 0,\n'
-            '      "safety": 0,\n'
-            '      "final_score": 0.0,\n'
-            '      "reason": "one sentence"\n'
-            "    }\n"
-            "  ]\n"
-            "}\n\n"
+            "Output naturally. You do not need to follow JSON.\n"
+            "But your last line must be exactly in this form:\n"
+            "Final strategy: <one candidate category>\n"
+            "If possible, include short score lines such as '<candidate>: 4.5/5 - reason'.\n\n"
         )
 
     return "".join([
         task_instruction,
-        "Do not choose self-disclosure unless there is a strong reason.\n",
+        "Do not choose self-disclosure unless there is strong, explicit evidence in the response or context.\n",
         "Do not invent evidence outside the provided context.\n\n",
         schema,
         f"Dialogue context:\n{context_text}\n\n",
@@ -305,13 +289,15 @@ def build_prompt(
         f"Emotion:\n{emotion or 'unknown'}\n\n",
         f"Reason:\n{reason or 'unknown'}\n\n",
         "COMET facts:\n",
-        f"{json.dumps(commonsense_facts[:8], ensure_ascii=False, indent=2)}\n\n",
-        "HEAL stressors and expectations:\n",
-        f"{json.dumps({'top_stressors': heal_result.get('top_stressors', []), 'top_expectations': heal_result.get('top_expectations', [])}, ensure_ascii=False, indent=2)}\n\n",
+        "\n".join(comet_lines) + "\n\n",
+        "HEAL top stressors:\n",
+        "\n".join(stressor_lines) + "\n\n",
+        "HEAL top expectations:\n",
+        "\n".join(expectation_lines) + "\n\n",
         "HEAL top responses:\n",
-        f"{json.dumps(heal_responses, ensure_ascii=False, indent=2)}\n\n",
+        "\n".join(response_lines) + "\n\n",
         "Candidate strategies:\n",
-        f"{json.dumps(compact_candidates, ensure_ascii=False, indent=2)}\n",
+        "\n".join(candidate_lines) + "\n",
     ])
 
 
@@ -345,6 +331,68 @@ def normalize_result(result: Dict[str, Any], mode: str, candidates: List[Dict[st
         "brief_rationale": str(result.get("brief_rationale", "")),
         "candidate_scores": normalized_rows,
     }
+
+
+def parse_strategy_from_freeform(text: str, mode: str, candidates: List[Dict[str, str]]) -> Dict[str, Any]:
+    candidate_names = [item["category"] for item in candidates]
+    candidate_pattern = "|".join(re.escape(name) for name in sorted(candidate_names, key=len, reverse=True))
+
+    final_match = re.search(rf"final\s+strategy\s*[:：]\s*({candidate_pattern})", text, flags=re.IGNORECASE)
+    selected = canonical_strategy_label(final_match.group(1)) if final_match else ""
+
+    if not selected:
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        for line in reversed(lines[-12:]):
+            match = re.search(candidate_pattern, line, flags=re.IGNORECASE)
+            if match:
+                selected = canonical_strategy_label(match.group(0))
+                break
+
+    if not selected:
+        raise ValueError("Failed to parse final strategy from freeform output")
+
+    score_rows = []
+    score_regex = re.compile(
+        rf"^\s*({candidate_pattern})\s*[:：-]\s*([0-5](?:\.\d+)?)\s*(?:/\s*5)?\s*(?:[-:：]\s*(.*))?$",
+        flags=re.IGNORECASE,
+    )
+    for line in text.splitlines():
+        match = score_regex.search(line.strip())
+        if not match:
+            continue
+        category = canonical_strategy_label(match.group(1))
+        score = float(match.group(2))
+        reason = (match.group(3) or "").strip()
+        score_rows.append(
+            {
+                "category": category,
+                "response_style_match": score if mode == "classify" else 0.0,
+                "empathy_fit": score if mode != "classify" else 0.0,
+                "actionability": 0.0,
+                "evidence_support": 0.0,
+                "safety": 0.0,
+                "final_score": score,
+                "reason": reason,
+            }
+        )
+
+    rationale = ""
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    for idx, line in enumerate(lines):
+        if re.search(r"final\s+strategy\s*[:：]", line, flags=re.IGNORECASE):
+            if idx > 0:
+                rationale = lines[idx - 1]
+            break
+
+    return normalize_result(
+        {
+            "selected_strategy": selected,
+            "brief_rationale": rationale,
+            "candidate_scores": score_rows,
+        },
+        mode,
+        candidates,
+    )
 
 
 def blend_candidate_scores(
@@ -502,13 +550,19 @@ def parse_with_retry(qwen: QwenClient, system_prompt: str, prompt: str, mode: st
         parsed = extract_json_block(raw_output)
         return normalize_result(parsed, mode, candidates), raw_output
     except Exception:
-        retry_prompt = prompt + "\n\nYour previous answer was invalid. Return valid JSON only. Do not include markdown fences."
-        retry_output = qwen.generate(system_prompt, retry_prompt)
         try:
-            parsed = extract_json_block(retry_output)
-            return normalize_result(parsed, mode, candidates), retry_output
-        except Exception as exc:
-            raise ValueError(f"Failed to parse JSON from model output. first_output={raw_output!r} retry_output={retry_output!r}") from exc
+            return parse_strategy_from_freeform(raw_output, mode, candidates), raw_output
+        except Exception:
+            retry_prompt = prompt + "\n\nPlease answer again. Think step by step if needed, but make the last line exactly 'Final strategy: <candidate>'."
+            retry_output = qwen.generate(system_prompt, retry_prompt)
+            try:
+                parsed = extract_json_block(retry_output)
+                return normalize_result(parsed, mode, candidates), retry_output
+            except Exception:
+                try:
+                    return parse_strategy_from_freeform(retry_output, mode, candidates), retry_output
+                except Exception as exc:
+                    raise ValueError(f"Failed to parse model output. first_output={raw_output!r} retry_output={retry_output!r}") from exc
 
 
 def run_pipeline(
@@ -518,11 +572,11 @@ def run_pipeline(
     qwen_path: Path,
     heal_dir: Path = DEFAULT_HEAL_DIR,
     device: str = DEFAULT_DEVICE,
-    max_new_tokens: int = 512,
+    max_new_tokens: int = 1024,
     task_mode: str = "auto",
     limit: int = 0,
-    enable_thinking: bool = False,
-    rule_first_classify: bool = True,
+    enable_thinking: bool = True,
+    rule_first_classify: bool = False,
 ) -> Dict[str, Any]:
     output_dir.mkdir(parents=True, exist_ok=True)
     log_dir.mkdir(parents=True, exist_ok=True)
@@ -601,6 +655,30 @@ def run_pipeline(
             comet_priors = compute_comet_priors(commonsense_facts)
             response_priors = response_style_prior(supporter_response, heal, candidates)
 
+            logger.info("sample=%s comet_facts=%s", sample_id, json.dumps(commonsense_facts, ensure_ascii=False))
+            logger.info("sample=%s heal_retrieval=%s", sample_id, json.dumps({
+                "top_stressors": heal_result.get("top_stressors", []),
+                "top_expectations": heal_result.get("top_expectations", []),
+                "top_responses": heal_result.get("top_responses", []),
+                "strategy_priors": heal_result.get("strategy_priors", {}),
+            }, ensure_ascii=False))
+
+            prompt = build_prompt(
+                sample=sample,
+                mode=mode,
+                context_text=context_text,
+                utterance=utterance,
+                supporter_response=supporter_response,
+                emotion=emotion,
+                reason=reason,
+                commonsense_facts=commonsense_facts,
+                heal_result=heal_result,
+                comet_priors=comet_priors,
+                response_priors=response_priors,
+                candidates=candidates,
+            )
+            logger.info("sample=%s prompt=%s", sample_id, prompt)
+
             if mode == "classify" and rule_first_classify and max(response_priors.values(), default=0.0) >= 1.0:
                 raw_output = "SKIPPED_LLM_RULE_PRIOR"
                 llm_result = fallback_result_from_priors(
@@ -611,21 +689,6 @@ def run_pipeline(
                     reason="Rule-first classify fallback from supporter response style.",
                 )
             else:
-                prompt = build_prompt(
-                    sample=sample,
-                    mode=mode,
-                    context_text=context_text,
-                    utterance=utterance,
-                    supporter_response=supporter_response,
-                    emotion=emotion,
-                    reason=reason,
-                    commonsense_facts=commonsense_facts,
-                    heal_result=heal_result,
-                    comet_priors=comet_priors,
-                    response_priors=response_priors,
-                    candidates=candidates,
-                )
-
                 try:
                     llm_raw_result, raw_output = parse_with_retry(qwen, system_prompt, prompt, mode, candidates)
                     llm_result = blend_candidate_scores(llm_raw_result, heal_result, comet_priors, response_priors, candidates)
@@ -639,6 +702,7 @@ def run_pipeline(
                         response_priors=response_priors,
                         reason=f"Fallback from priors after parse failure: {exc}",
                     )
+            logger.info("sample=%s raw_llm_output=%s", sample_id, raw_output)
 
             enriched = dict(sample)
             enriched["expanded_query"] = expanded_query
@@ -709,11 +773,11 @@ if __name__ == "__main__":
     parser.add_argument("--heal_dir", type=Path, default=DEFAULT_HEAL_DIR, help="HEAL root directory")
     parser.add_argument("--qwen_path", type=Path, default=DEFAULT_QWEN_PATH, help="Local Qwen model path")
     parser.add_argument("--device", type=str, default=DEFAULT_DEVICE, help="Reserved for compatibility")
-    parser.add_argument("--max_new_tokens", type=int, default=512, help="Maximum generation length")
+    parser.add_argument("--max_new_tokens", type=int, default=1024, help="Maximum generation length")
     parser.add_argument("--task_mode", choices=["auto", "classify", "select"], default="auto", help="Inference mode")
     parser.add_argument("--limit", type=int, default=0, help="Optional sample limit for quick tests")
-    parser.add_argument("--enable_thinking", action="store_true", help="Enable model thinking mode")
-    parser.add_argument("--no_rule_first_classify", action="store_true", help="Disable rule-first shortcut in classify mode")
+    parser.add_argument("--disable_thinking", action="store_true", help="Disable model thinking mode")
+    parser.add_argument("--rule_first_classify", action="store_true", help="Enable rule-first shortcut in classify mode")
     args = parser.parse_args()
 
     run_pipeline(
@@ -726,6 +790,6 @@ if __name__ == "__main__":
         max_new_tokens=args.max_new_tokens,
         task_mode=args.task_mode,
         limit=args.limit,
-        enable_thinking=args.enable_thinking,
-        rule_first_classify=not args.no_rule_first_classify,
+        enable_thinking=not args.disable_thinking,
+        rule_first_classify=args.rule_first_classify,
     )

@@ -3,7 +3,7 @@ from pathlib import Path
 
 # Default paths
 BASE_DIR = Path(__file__).resolve().parent
-DEFAULT_INPUT_JSONL = Path("/data2/xqchen/Qwen3_test/output/emotion_prediction_20260310_220307.jsonl")
+DEFAULT_INPUT_JSONL = Path("/data2/xqchen/Judge/data/demo.json")
 DEFAULT_OUTPUT_DIR = Path("/data2/xqchen/Judge/output")
 DEFAULT_LOG_DIR = Path("/data2/xqchen/Judge/log")
 DEFAULT_HEAL_DIR = Path("/data2/xqchen/Judge/model/HEAL")
